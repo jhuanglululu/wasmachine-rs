@@ -54,7 +54,26 @@ fn vectors() -> Vec<(f64, i32, String)> {
         (f64::NEG_INFINITY, 0, "-inf".to_owned()),
         // Seventeen decimals of 0.3 expose the exact binary value.
         (0.3, 17, "0.29999999999999999".to_owned()),
+        // --- Added after the Java side measured what its own rounding needed
+        // pinning. Same rule: fix a failure on both sides, never in one column.
+        //
+        // 2.675 is the classic "looks like a tie, isn't" case: the double is
+        // 2.674999999999999822…, so half-even has nothing to break and it
+        // rounds down.
+        (2.675, 2, "2.67".to_owned()),
+        // Zero and whole numbers still get their decimals.
+        (0.0, 2, "0.00".to_owned()),
+        (-1.0, 2, "-1.00".to_owned()),
+        // Shortest round-trip keeps every significant digit and adds none.
+        (12345.6789, SHORTEST, "12345.6789".to_owned()),
+        (100.0, SHORTEST, "100".to_owned()),
+        // Seventeen decimals of an exact value: all zeros, no drift.
+        (1.0, 17, "1.00000000000000000".to_owned()),
     ]);
+    // The small-magnitude mirror of 1e300: 302 characters ("0." + 299 zeros +
+    // the 1 in the 300th decimal place), and the other case that outgrows the
+    // marshalling layer's inline buffer.
+    v.push((1e-300, SHORTEST, format!("0.{}1", "0".repeat(299))));
     v
 }
 
@@ -81,6 +100,13 @@ fn the_long_vectors_are_as_long_as_they_claim() {
         "1e300 must print as 1 followed by 300 zeros"
     );
     assert!(big.starts_with('1') && big[1..].bytes().all(|b| b == b'0'));
+
+    // "0." + 299 zeros + "1" — one character longer than 1e300's form, because
+    // the leading "0." is two characters and the exponent costs the same 300.
+    let small = format_f64(1e-300, SHORTEST);
+    assert_eq!(small.len(), 302, "1e-300 must print in plain notation");
+    assert!(small.starts_with("0.") && small.ends_with('1'));
+    assert!(small[2..small.len() - 1].bytes().all(|b| b == b'0'));
 
     assert_eq!(format_f64(0.3, 17).len(), 19); // "0." + 17 decimals
 }
