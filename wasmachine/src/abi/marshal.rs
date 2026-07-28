@@ -73,6 +73,51 @@ pub fn channel_peek(id: i32, buf: &mut [u8]) {
     unsafe { sys::channel_peek(id, buf.as_mut_ptr()) }
 }
 
+// --- The math kernel's one pointer-taking entry. ---
+
+/// Format `x` host-side and take the text back as a `String`.
+///
+/// `precision` is `-1` for the shortest round-trip form or `0..=17` fixed
+/// decimals; anything else is API misuse and kills. The host reports the exact
+/// byte count and writes as much of it as fits, so a first buffer that turns out
+/// short costs one extra call and never a wrong answer — and since nothing parks
+/// between the two calls, the retry cannot race another task.
+pub fn format_f64(x: f64, precision: i32) -> String {
+    // One stack buffer covers every ordinary number; only the extremes
+    // (`1e300` needs 302 bytes, `{:.17}` of a large value more) retry.
+    const INLINE: usize = 32;
+    let mut inline = [0u8; INLINE];
+    let needed =
+        count(unsafe { sys::format_f64(x, precision, inline.as_mut_ptr(), INLINE as i32) });
+    if needed <= INLINE {
+        return decode(&inline[..needed]);
+    }
+    let mut heap = vec![0u8; needed];
+    let again = count(unsafe {
+        sys::format_f64(
+            x,
+            precision,
+            heap.as_mut_ptr(),
+            i32::try_from(needed).expect("formatted f64 longer than i32::MAX bytes"),
+        )
+    });
+    assert!(
+        again == needed,
+        "host asked for {needed} bytes to format a f64, then wanted {again}"
+    );
+    decode(&heap)
+}
+
+/// A byte count the host just reported. Negative is the host contradicting the
+/// ABI, which is a kill.
+fn count(n: i32) -> usize {
+    usize::try_from(n).unwrap_or_else(|_| panic!("host returned a negative format length: {n}"))
+}
+
+fn decode(bytes: &[u8]) -> String {
+    String::from_utf8(bytes.to_vec()).expect("host returned a non-UTF-8 formatted number")
+}
+
 // --- The allocator's one import. Only the global allocator calls this, and it
 // is inherently pointer-shaped, so it stays raw — but it stays *here*. ---
 

@@ -26,7 +26,6 @@ use syn::{Ident, ItemFn, LitStr, Path, Token, braced, parenthesized, parse_macro
 ///     config(
 ///         sdk = ::billboard,
 ///         attribute = "#[billboard::main]",
-///         main_export = _billboard_main,
 ///         abi_export = _billboard_abi,
 ///     ),
 ///     random_seed = 7
@@ -34,18 +33,32 @@ use syn::{Ident, ItemFn, LitStr, Path, Token, braced, parenthesized, parse_macro
 /// fn main() -> ExitCode { … }
 /// ```
 ///
+/// # What it emits
+///
+/// The **engine handshake is not configurable** — every guest exports the same
+/// two names, which is what lets the host load any module built on this crate
+/// without knowing which plugin it belongs to:
+///
+/// - `_engine_main() -> i32` — the entry point, run as task 0: runtime init,
+///   the optional reseed, the author's function, and its exit code returned raw.
+///   The engine attaches no meaning to that `i32`; the plugin defines it.
+/// - `_engine_abi() -> i32` — returns the SDK's re-export of
+///   `wasmachine::ENGINE_ABI_VERSION`.
+///
+/// Beside them goes the **plugin's own handshake**, which is configurable
+/// because the plugin owns its name and its version: `abi_export` returns the
+/// SDK's `ABI_VERSION`. Both are checked at load time, never at first use.
+///
 /// `config` keys:
 /// - `sdk` — path to the SDK crate as the *animation's* crate graph spells it
 ///   (the generated code is written into the animation's crate, so it cannot
 ///   name `::wasmachine`, which the animation does not depend on).
 /// - `attribute` — how to name the author-facing attribute in error messages.
-/// - `main_export` / `abi_export` — the two `#[no_mangle]` exports to emit.
+/// - `abi_export` — the plugin handshake export to emit, e.g. `_billboard_abi`.
 ///
-/// The SDK crate must expose, at its root: `__rt` (re-export
-/// `wasmachine::__rt`), an `ExitCode` type with a `const fn as_i32(self) -> i32`,
-/// and an `ABI_VERSION` constant. The generated `main_export` runs
-/// `__rt::init()`, then the optional seeding, then the author's function, and
-/// returns its exit code as an `i32`; `abi_export` returns `ABI_VERSION`.
+/// The SDK crate must expose, at its root: `__rt` and `ENGINE_ABI_VERSION`
+/// (re-exports of `wasmachine`'s), an `ExitCode` type with a
+/// `const fn as_i32(self) -> i32`, and its own `ABI_VERSION` constant.
 ///
 /// # `random_seed`
 ///
@@ -65,7 +78,6 @@ pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let Config {
         sdk,
         attribute,
-        main_export,
         abi_export,
     } = config;
     let func = parse_macro_input!(item as ItemFn);
@@ -92,7 +104,7 @@ pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn #main_export() -> i32 {
+        pub extern "C" fn _engine_main() -> i32 {
             #sdk::__rt::init();
             #seed
             // Bind the result to the SDK's exit type so a wrong return type
@@ -100,6 +112,11 @@ pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
             // deep in the conversion.
             let __code: #sdk::ExitCode = #name();
             __code.as_i32()
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn _engine_abi() -> i32 {
+            #sdk::ENGINE_ABI_VERSION
         }
 
         #[unsafe(no_mangle)]
@@ -120,7 +137,6 @@ struct SdkMain {
 struct Config {
     sdk: Path,
     attribute: String,
-    main_export: Ident,
     abi_export: Ident,
 }
 
@@ -150,7 +166,6 @@ impl Config {
 
         let mut sdk = None;
         let mut attribute = None;
-        let mut main_export = None;
         let mut abi_export = None;
         while !content.is_empty() {
             let key: Ident = content.parse()?;
@@ -158,14 +173,13 @@ impl Config {
             match key.to_string().as_str() {
                 "sdk" => sdk = Some(content.parse::<Path>()?),
                 "attribute" => attribute = Some(content.parse::<LitStr>()?.value()),
-                "main_export" => main_export = Some(content.parse::<Ident>()?),
                 "abi_export" => abi_export = Some(content.parse::<Ident>()?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
                             "unknown `config` key `{other}`; expected sdk, attribute, \
-                             main_export, or abi_export"
+                             or abi_export"
                         ),
                     ));
                 }
@@ -179,7 +193,6 @@ impl Config {
         Ok(Config {
             sdk: sdk.ok_or_else(|| missing("sdk"))?,
             attribute: attribute.ok_or_else(|| missing("attribute"))?,
-            main_export: main_export.ok_or_else(|| missing("main_export"))?,
             abi_export: abi_export.ok_or_else(|| missing("abi_export"))?,
         })
     }
@@ -680,7 +693,6 @@ mod tests {
             r##"config(
                 sdk = ::billboard,
                 attribute = "#[billboard::main]",
-                main_export = _billboard_main,
                 abi_export = _billboard_abi,
             ), random_seed = 7"##,
         )
@@ -688,12 +700,12 @@ mod tests {
         let Config {
             sdk,
             attribute,
-            main_export,
             abi_export,
         } = instance.config;
         assert_eq!(quote::quote!(#sdk).to_string(), ":: billboard");
         assert_eq!(attribute, "#[billboard::main]");
-        assert_eq!(main_export, "_billboard_main");
+        // Only the *plugin's* handshake is named here; the engine's exports are
+        // fixed, so an SDK cannot rename or skip them.
         assert_eq!(abi_export, "_billboard_abi");
         assert_eq!(instance.args.random_seed, Some(7));
     }
@@ -702,7 +714,7 @@ mod tests {
     fn a_config_group_with_no_author_arguments_parses() {
         let instance: SdkMain = syn::parse_str(
             r##"config(sdk = ::billboard, attribute = "#[billboard::main]",
-                     main_export = _m, abi_export = _a,),"##,
+                     abi_export = _a,),"##,
         )
         .expect("trailing comma after config, no author args");
         assert_eq!(instance.args.random_seed, None);
@@ -714,13 +726,32 @@ mod tests {
     fn unknown_author_arguments_name_the_sdk_attribute() {
         let err = syn::parse_str::<SdkMain>(
             r##"config(sdk = ::billboard, attribute = "#[billboard::main]",
-                     main_export = _m, abi_export = _a), random_tomato = 1"##,
+                     abi_export = _a), random_tomato = 1"##,
         )
         .err()
         .expect("must reject an unknown author argument");
         assert!(
             err.to_string().contains("#[billboard::main]"),
             "message should name the author-facing attribute: {err}"
+        );
+    }
+
+    /// ABI 3 took `main_export` away: the entry point is `_engine_main` for
+    /// every guest now. An SDK still passing the old key must be told so at
+    /// compile time rather than quietly exporting nothing.
+    #[test]
+    fn the_pre_abi3_main_export_key_is_rejected() {
+        let err = syn::parse_str::<SdkMain>(
+            r##"config(sdk = ::billboard, attribute = "#[billboard::main]",
+                     main_export = _billboard_main, abi_export = _billboard_abi)"##,
+        )
+        .err()
+        .expect("must reject a config key this macro no longer honours");
+        let message = err.to_string();
+        assert!(message.contains("main_export"), "{message}");
+        assert!(
+            message.contains("expected sdk, attribute, or abi_export"),
+            "{message}"
         );
     }
 

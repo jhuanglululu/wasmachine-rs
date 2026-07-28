@@ -1,6 +1,7 @@
 //! [`Rotation`]: an orientation stored as a unit quaternion.
 
 use super::angle::Radians;
+use super::kernel;
 use super::vectors::{Offset, Vector3d};
 
 /// An orientation, stored as a quaternion. Build one with
@@ -32,7 +33,11 @@ impl Rotation {
         let len = (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z).sqrt();
         assert!(len > 0.0, "Rotation::axis_angle requires a nonzero axis");
         let a = angle.into().value();
-        let (s, c) = (a / 2.0).sin_cos();
+        // Through the kernel, not `f64::sin_cos`: on wasm that method is a
+        // software routine compiled into the module. The host has no fused
+        // sincos either, so this is deliberately two crossings.
+        let half = a / 2.0;
+        let (s, c) = (kernel::sin(half), kernel::cos(half));
         Rotation {
             x: axis.x / len * s,
             y: axis.y / len * s,
