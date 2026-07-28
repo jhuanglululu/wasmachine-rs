@@ -1,0 +1,12 @@
+[package]
+name = "wasmachine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wasmachine-macros = { path = "../wasmachine-macros" }
+# The channel payload guard: `Pod` is what makes "these bytes mean the same
+# thing in another task's memory" a compile-time property, and it is what the
+# math types derive so they can cross a channel. Plugin SDKs re-export it from
+# their own prelude so animations never depend on bytemuck directly.
+bytemuck = { version = "1", features = ["derive"] }
