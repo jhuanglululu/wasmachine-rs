@@ -68,6 +68,11 @@ use syn::{Ident, ItemFn, LitStr, Path, Token, braced, parenthesized, parse_macro
 /// draw from it, so the animation plays out identically every run. The reseed
 /// happens during init, *before* `main`, so the very first draw is already
 /// seeded.
+///
+/// The literal is also re-emitted beside the entry exports as
+/// `pub const RANDOM_SEED: i64`, so guest code can reuse the same seed (say,
+/// for a `SplitRng` master) without repeating the number. Don't declare your
+/// own `RANDOM_SEED` at the crate root when the argument is present.
 #[proc_macro_attribute]
 pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let instance = match syn::parse::<SdkMain>(attr) {
@@ -93,15 +98,26 @@ pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Seeding is part of init, so it runs before the user's first line and
     // before any task is spawned — the routing flag is then immutable, and a
     // fork just copies an already-correct value.
-    let seed = args.random_seed.map(|seed| {
-        // Emitted through proc_macro2's own literal, which renders i64::MIN as
-        // `-9223372036854775808i64` — a form rustc accepts, unlike a negation
-        // applied to a literal that has already overflowed.
-        let seed = proc_macro2::Literal::i64_suffixed(seed);
+    // Emitted through proc_macro2's own literal, which renders i64::MIN as
+    // `-9223372036854775808i64` — a form rustc accepts, unlike a negation
+    // applied to a literal that has already overflowed.
+    let seed_literal = args
+        .random_seed
+        .map(proc_macro2::Literal::i64_suffixed);
+    let seed = seed_literal.as_ref().map(|seed| {
         quote! { #sdk::__rt::seed_random(#seed); }
+    });
+    let seed_const = seed_literal.as_ref().map(|seed| {
+        quote! {
+            /// The seed `random_seed` handed the host's deterministic stream,
+            /// re-exposed so guest code can reuse it without repeating the number.
+            pub const RANDOM_SEED: i64 = #seed;
+        }
     });
     quote! {
         #func
+
+        #seed_const
 
         #[unsafe(no_mangle)]
         pub extern "C" fn _engine_main() -> i32 {
