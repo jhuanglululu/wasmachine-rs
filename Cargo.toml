@@ -6,8 +6,9 @@ members = ["wasmachine", "wasmachine-macros"]
 version = "0.1.0"
 edition = "2024"
 
-# Animation modules ship as release builds; panic=abort matches the guest ABI
-# (a panic routes through the SDK hook to host `fail`, then traps).
+# Guest modules built against this core ship as release builds; panic=abort
+# matches the guest ABI (a panic routes through the SDK hook to host `fail`,
+# then traps).
 [profile.release]
 panic = "abort"
 opt-level = "s"
