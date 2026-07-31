@@ -135,6 +135,12 @@ fn scale_composition() {
     );
     assert_eq!(Scale::splat(1.0), Scale::new(1.0, 1.0, 1.0));
 
+    // ONE is the identity of that composition, both sides.
+    assert_eq!(Scale::ONE, Scale::new(1.0, 1.0, 1.0));
+    let s = Scale::new(2.0, 0.25, 3.0);
+    assert_eq!(s * Scale::ONE, s);
+    assert_eq!(Scale::ONE * s, s);
+
     // MulAssign composes in place: (2,3,4) * (1,2,0.5) = (2,6,2).
     let mut s = Scale::new(2.0, 3.0, 4.0);
     s *= Scale::new(1.0, 2.0, 0.5);
@@ -154,6 +160,8 @@ fn ticks_arithmetic() {
     assert_eq!(Ticks::new(10) + Ticks::new(5), Ticks::new(15));
     assert_eq!(Ticks::new(10) - Ticks::new(4), Ticks::new(6));
     assert_eq!(Ticks::new(10) * 3, Ticks::new(30));
+    // The commutative form multiplies the same way round.
+    assert_eq!(3 * Ticks::new(10), Ticks::new(30));
     assert_eq!(Ticks::new(50) / 5, Ticks::new(10));
     // 50 mod 7: 7*7 = 49, remainder 1.
     assert_eq!(Ticks::new(50) % 7, Ticks::new(1));
@@ -176,6 +184,33 @@ fn ticks_arithmetic() {
     let mut u = Ticks::new(50);
     u %= Ticks::new(20);
     assert_eq!(u, Ticks::new(10));
+}
+
+/// The shape a schedule is actually built in: a beat, some multiples of it,
+/// and a running cursor accumulated with `+=`.
+#[test]
+fn ticks_compose_into_a_schedule() {
+    let beat = Ticks::ONE_SECOND / 4; // 20 / 4 = 5 ticks
+    assert_eq!(beat, Ticks::new(5));
+
+    // intro = 4 beats = 20, hold = 3 beats = 15, outro = 2 beats = 10.
+    let intro = beat * 4;
+    let hold = 3 * beat;
+    let outro = beat * 2;
+    assert_eq!(intro, Ticks::new(20));
+    assert_eq!(hold, Ticks::new(15));
+    assert_eq!(outro, Ticks::new(10));
+
+    // Cue points: 0, 20, 35, and a total of 45.
+    let mut cursor = Ticks::default();
+    assert_eq!(cursor, Ticks::new(0));
+    cursor += intro;
+    assert_eq!(cursor, Ticks::new(20));
+    cursor += hold;
+    assert_eq!(cursor, Ticks::new(35));
+    assert_eq!(cursor + outro, Ticks::new(45));
+    // 45 ticks is 2.25 seconds.
+    assert!(approx((intro + hold + outro).as_secs(), 2.25));
 }
 
 #[test]

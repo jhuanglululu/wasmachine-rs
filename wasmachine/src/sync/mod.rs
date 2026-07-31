@@ -29,7 +29,12 @@
 //! ```
 //!
 //! Handles have no `Drop`: host sync objects live until the animation ends
-//! (their count is capped per instance, and exceeding the cap kills loudly).
+//! (their count is capped per instance, and exceeding the cap kills loudly —
+//! the host's current implementation puts that cap at 65536 signals, barriers,
+//! composites and channels together, which is far above anything an animation
+//! should be creating; it is a runaway-allocation backstop, not a budget to
+//! spend). Since nothing is ever released, a primitive created inside a
+//! per-frame loop accumulates.
 //! Nothing here needs atomics — scheduling is cooperative and a task runs
 //! uninterrupted between two blocking points.
 //!

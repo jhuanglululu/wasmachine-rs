@@ -83,6 +83,15 @@ impl Mul<u64> for Ticks {
     }
 }
 
+/// The commutative form, so a schedule reads either way round
+/// (`3 * beat` as well as `beat * 3`).
+impl Mul<Ticks> for u64 {
+    type Output = Ticks;
+    fn mul(self, rhs: Ticks) -> Ticks {
+        Ticks(self * rhs.0)
+    }
+}
+
 impl Div<u64> for Ticks {
     type Output = Ticks;
     fn div(self, rhs: u64) -> Ticks {

@@ -2,6 +2,23 @@
 //! plus the hand-written extras that don't fit the macro's uniform shape
 //! (`Vector3d` rounding to block coords, geometric products, `Scale`/
 //! `Velocity` algebra).
+//!
+//! # What every vector type has
+//!
+//! The macro body below lists only what differs per type, so the shared API is
+//! invisible here. Every type in the family gets, uniformly:
+//!
+//! - public `x`, `y`, `z` fields;
+//! - `const fn new(x, y, z)` and `const fn splat(v)`;
+//! - the constants `ZERO`, and the unit vectors `X`, `Y`, `Z`;
+//! - `Neg`, `AsRef<Self>`, and `From` both ways with `(T, T, T)` and `[T; 3]`;
+//! - `Clone`, `Copy`, `Debug`, `Default`, `PartialEq`, and `Pod`/`Zeroable`
+//!   (so any of them can cross a [`channel`](crate::sync::channel)).
+//!
+//! On top of that, the `ops`/`scale`/`convert` sections below add the typed
+//! addition and subtraction, the scalar `*` and `/` (in both operand orders,
+//! plus the `*=` / `/=` forms), and the explicit `From` conversions between
+//! types — those *are* per-type, so read them off the macro body.
 
 use super::ticks::Ticks;
 
@@ -110,6 +127,12 @@ impl Offset {
     pub fn dot(self, rhs: Offset) -> f64 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
+}
+
+impl Scale {
+    /// Unchanged size — the identity for `Scale * Scale`, and what `ZERO` is
+    /// not: a scale of zero collapses the model.
+    pub const ONE: Scale = Scale::splat(1.0);
 }
 
 /// Component-wise; composing scales multiplies factors.

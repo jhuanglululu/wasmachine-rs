@@ -34,6 +34,12 @@ pub struct Task {
 /// proportional to how big the animation's memory already is, paid in one
 /// blocking-point-free burst, and `N` live tasks hold `N` copies of it.
 ///
+/// That copy includes the parent's live stack, owner handles and all — but the
+/// child never unwinds it: `f` returns into the ABI's `exit`, which never
+/// returns, and guests are built `panic = "abort"`. Nothing in the child's
+/// inherited copy is ever dropped, so a child finishing (or dying) despawns
+/// nothing the parent owns.
+///
 /// Against the host's per-instance memory cap, what each live task charges is
 /// its own guest heap, plus what the animation has queued in channels — one
 /// allowance shared by every task rather than a fresh one per task. Exceeding
@@ -44,7 +50,14 @@ pub struct Task {
 ///
 /// There is no cap on the task count itself, which means the practical ceiling
 /// is that multiplication — an animation with a fat heap runs out at a handful
-/// of tasks, a lean one at many. Budget a task per genuinely concurrent moving
+/// of tasks, a lean one at many. For scale: an animation whose per-task heap is
+/// the usual few kilobytes of frame state fits tens of tasks inside a
+/// 16-MiB-class cap without the memory mattering at all, so unless the animation
+/// holds something genuinely large per task, memory is not what should decide
+/// the count. What should is legibility — concurrency you cannot see on screen
+/// is not worth animating, and a handful of named moving parts is easier to
+/// reason about (and to keep out of deadlock) than dozens.
+/// Budget a task per genuinely concurrent moving
 /// part, not per unit of work; a loop over frames in one task costs nothing
 /// extra, and [`sync`](crate::sync) primitives are how a fixed set of tasks
 /// coordinates without spawning more.
