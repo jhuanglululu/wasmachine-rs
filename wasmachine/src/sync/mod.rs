@@ -32,6 +32,22 @@
 //! (their count is capped per instance, and exceeding the cap kills loudly).
 //! Nothing here needs atomics — scheduling is cooperative and a task runs
 //! uninterrupted between two blocking points.
+//!
+//! # Deadlock is silent
+//!
+//! Park every task with nothing left to release them — a parent joining a child
+//! stuck in a full `send`, two tasks each waiting for the other's [`Signal`], a
+//! [`Barrier::new(3)`](Barrier) only two tasks ever reach — and the host does
+//! **not** notice. It is not detected, not reported, and not killed. Each game
+//! tick the scheduler looks for a due task, finds none, and the instance simply
+//! reports that it is still running. It burns no instruction budget while parked,
+//! so the runaway-loop kill never trips either.
+//!
+//! The animation therefore hangs: on screen, whatever it last drew stays there
+//! forever, with nothing in the log to say why. It ends only when something
+//! outside it is torn down. Treat a permanently frozen animation as a suspected
+//! deadlock rather than looking for an error to explain it — and give every park
+//! an obvious releaser when you write it, because there is no runtime backstop.
 
 mod channel;
 

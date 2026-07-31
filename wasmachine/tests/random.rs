@@ -193,6 +193,115 @@ fn choose_picks_from_the_slice() {
     );
 }
 
+/// Hand-traced against the published seed-0 SplitMix64 vectors, not against
+/// this implementation.
+///
+/// Fisher-Yates walks `i = 3, 2, 1`, picking `j` uniformly in `0..=i`:
+///
+/// - `i = 3`, span 4. `2^64 mod 4 = 0`, so nothing is rejected and
+///   `j = 0xE220A8397B1DCDAF % 4`. The low two bits of `0xAF` are `11`, so
+///   `j = 3`: `swap(3, 3)` leaves `[0, 1, 2, 3]`.
+/// - `i = 2`, span 3. `2^64 mod 3 = 1`, and `0x6E789E6AA1B965F4` is far above
+///   that, so it is accepted. `16 ≡ 1 (mod 3)`, so the value mod 3 is the sum
+///   of its hex digits mod 3 — `6+14+7+8+9+14+6+10+10+1+11+9+6+5+15+4 = 135`,
+///   divisible by 3 — so `j = 0`: `swap(2, 0)` gives `[2, 1, 0, 3]`.
+/// - `i = 1`, span 2. `j = 0x06C45D188009454F % 2 = 1` (the value is odd), so
+///   `swap(1, 1)` changes nothing.
+#[test]
+fn shuffle_matches_a_hand_traced_fisher_yates() {
+    let mut rng = SplitRng::new(0);
+    let mut items = [0, 1, 2, 3];
+    rng.shuffle(&mut items);
+    assert_eq!(items, [2, 1, 0, 3]);
+}
+
+/// Three draws for four elements, none rejected above — so the stream must sit
+/// exactly three values into the pinned seed-0 sequence afterwards.
+#[test]
+fn shuffle_consumes_one_draw_per_element_past_the_first() {
+    let mut shuffled = SplitRng::new(0);
+    shuffled.shuffle(&mut [0, 1, 2, 3]);
+
+    let mut reference = SplitRng::new(0);
+    for _ in 0..3 {
+        let _ = reference.next_u64();
+    }
+    assert_eq!(shuffled, reference);
+}
+
+#[test]
+fn shuffle_of_a_trivial_slice_draws_nothing() {
+    // Nothing to reorder, so the stream must be untouched — a caller can shuffle
+    // a possibly-empty slice without perturbing a reproducible sequence.
+    let untouched = SplitRng::new(42);
+
+    let mut rng = SplitRng::new(42);
+    let mut empty: [u8; 0] = [];
+    rng.shuffle(&mut empty);
+    assert_eq!(rng, untouched);
+
+    let mut one = [7u8];
+    rng.shuffle(&mut one);
+    assert_eq!(one, [7]);
+    assert_eq!(rng, untouched);
+}
+
+#[test]
+fn shuffle_is_a_permutation() {
+    // Whatever the ordering, the multiset is preserved: nothing is dropped,
+    // duplicated, or invented — including when elements repeat.
+    let mut rng = SplitRng::new(2024);
+    for len in 0..24usize {
+        let original: Vec<u32> = (0..len as u32).map(|i| i % 5).collect();
+        let mut items = original.clone();
+        rng.shuffle(&mut items);
+
+        let (mut a, mut b) = (original, items);
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "shuffle of length {len} changed the multiset");
+    }
+}
+
+#[test]
+fn shuffle_reaches_every_permutation() {
+    // All 3! orderings of three distinct elements, and nothing outside them.
+    let all = [
+        [1, 2, 3],
+        [1, 3, 2],
+        [2, 1, 3],
+        [2, 3, 1],
+        [3, 1, 2],
+        [3, 2, 1],
+    ];
+    let mut seen = [0u32; 6];
+    let mut rng = SplitRng::new(1234);
+    for _ in 0..6000 {
+        let mut items = [1, 2, 3];
+        rng.shuffle(&mut items);
+        let at = all.iter().position(|p| *p == items).expect("a permutation");
+        seen[at] += 1;
+    }
+    assert!(
+        seen.iter().all(|c| (600..1400).contains(c)),
+        "permutations came out lopsided: {seen:?}"
+    );
+}
+
+#[test]
+fn shuffle_actually_reorders_a_long_slice() {
+    // 32! orderings; landing on the identity would be a broken shuffle, not luck.
+    let mut rng = SplitRng::new(9);
+    let mut items: Vec<u32> = (0..32).collect();
+    rng.shuffle(&mut items);
+    assert_ne!(items, (0..32).collect::<Vec<u32>>());
+
+    // And it is reproducible from the seed, like every other draw here.
+    let mut again: Vec<u32> = (0..32).collect();
+    SplitRng::new(9).shuffle(&mut again);
+    assert_eq!(again, items);
+}
+
 #[test]
 #[should_panic(expected = "empty slice")]
 fn choose_on_an_empty_slice_kills() {

@@ -6,6 +6,12 @@
 //! | host, non-deterministic | [`HostRng`] | a different show every run (the default) |
 //! | host, deterministic | [`HostSeededRng`] | the same show for the same viewer every visit |
 //!
+//! The tiers combine, and the combination is the one most animations want:
+//! `SplitRng::new(default_random().next_u64())` spends **one** ABI crossing on a
+//! nondeterministic seed, then draws as much as it likes guest-side for free. A
+//! different show every run, at pure-guest cost — reach for it the moment a
+//! per-frame or per-particle loop is calling [`HostRng`] over and over.
+//!
 //! [`default_random`] picks between the two host streams for you:
 //! non-deterministic normally, the deterministic stream when the animation
 //! declared `random_seed = N` on the SDK's `main` attribute.
@@ -22,6 +28,10 @@
 //! let hue = rng.range(0.0..360.0);
 //! let block = *rng.choose(&[blocks::RED_CONCRETE, blocks::BLUE_CONCRETE]);
 //! if rng.chance(0.25) { sparkle(); }
+//!
+//! // Different every run, but only one crossing pays for it.
+//! let mut cheap = SplitRng::new(default_random().next_u64());
+//! for _ in 0..10_000 { emit(cheap.next_f64()); }
 //!
 //! let mut master = SplitRng::new(42);
 //! let mut child = master.split();          // independent, before spawning
@@ -73,6 +83,23 @@ pub trait Rng {
     fn choose<'a, T>(&mut self, items: &'a [T]) -> &'a T {
         assert!(!items.is_empty(), "Rng::choose called on an empty slice");
         &items[bounded(self, items.len() as u64) as usize]
+    }
+
+    /// Shuffle in place, every ordering equally likely — Fisher-Yates, walking
+    /// from the end and swapping each element with a uniform pick from the part
+    /// not yet placed.
+    ///
+    /// Costs one unbiased draw per element past the first, so `len - 1` draws
+    /// for a slice that never hits a rejection. A slice of 0 or 1 elements is
+    /// already shuffled and draws nothing — unlike [`choose`](Rng::choose), an
+    /// empty slice is a legitimate thing to shuffle.
+    fn shuffle<T>(&mut self, slice: &mut [T]) {
+        // Descending, so the pick at i ranges over 0..=i: the unplaced prefix
+        // plus i itself. Ascending with the same bound would bias the result.
+        for i in (1..slice.len()).rev() {
+            let j = bounded(self, (i + 1) as u64) as usize;
+            slice.swap(i, j);
+        }
     }
 }
 

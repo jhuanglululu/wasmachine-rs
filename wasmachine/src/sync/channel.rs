@@ -16,6 +16,23 @@
 //! bytes have no defined value to copy). Derive `Pod + Zeroable` (a plugin SDK
 //! puts both in its prelude) on your own `#[repr(C)]` structs; the math types
 //! here already do.
+//!
+//! **Getting a result back out of a task.** A fork copies memory, so nothing a
+//! child computes is visible to the parent — a channel is the way home. Size it
+//! for everything the child will send (here: one message per child) so the child
+//! never parks in `send`, have the parent drain first, and only then
+//! [`join`](crate::Task::join) to reap. Draining first is what keeps it safe: a
+//! parent that joins a child still parked in a full `send` parks forever, and
+//! nothing detects that (see the [module docs](crate::sync)).
+//!
+//! ```ignore
+//! let (tx, rx) = channel::<Position>(WORKERS);
+//! let tasks: Vec<Task> = (0..WORKERS)
+//!     .map(|i| { let tx = tx.clone(); spawn(move || tx.send(survey(i))) })
+//!     .collect();
+//! let found: Vec<Position> = (0..WORKERS).map(|_| rx.recv()).collect();
+//! for t in tasks { t.join(); }
+//! ```
 
 use core::marker::PhantomData;
 

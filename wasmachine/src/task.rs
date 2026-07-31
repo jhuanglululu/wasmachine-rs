@@ -25,6 +25,29 @@ pub struct Task {
 /// full copy of memory, runs `f`, and exits. The parent returns immediately
 /// with the child's handle. Nothing but the fork itself crosses the ABI —
 /// no closures, no function pointers.
+///
+/// # What a task costs
+///
+/// "Full copy of memory" is literal: the host duplicates the entire linear
+/// memory, plus the stack, frames, globals and tables, at the moment of the
+/// fork. So a fork is *not* cheap the way an async task is cheap — it is
+/// proportional to how big the animation's memory already is, paid in one
+/// blocking-point-free burst, and `N` live tasks hold `N` copies of it.
+///
+/// Against the host's per-instance memory cap, what each live task charges is
+/// its own guest heap, plus what the animation has queued in channels — one
+/// allowance shared by every task rather than a fresh one per task. Exceeding
+/// it is not a throttle: the reservation is refused and the animation is killed
+/// with a message naming the overflow. The cap's *value* is host configuration,
+/// not something this crate pins, so the only portable rule is the shape: heap
+/// per task multiplies.
+///
+/// There is no cap on the task count itself, which means the practical ceiling
+/// is that multiplication — an animation with a fat heap runs out at a handful
+/// of tasks, a lean one at many. Budget a task per genuinely concurrent moving
+/// part, not per unit of work; a loop over frames in one task costs nothing
+/// extra, and [`sync`](crate::sync) primitives are how a fixed set of tasks
+/// coordinates without spawning more.
 pub fn spawn(f: impl FnOnce() + Sync + 'static) -> Task {
     match unsafe { abi::fork() } {
         0 => {
