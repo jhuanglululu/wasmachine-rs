@@ -752,9 +752,10 @@ mod tests {
         );
     }
 
-    /// ABI 3 took `main_export` away: the entry point is `_engine_main` for
-    /// every guest now. An SDK still passing the old key must be told so at
-    /// compile time rather than quietly exporting nothing.
+    /// The namespace split (ABI 3 of the original plugin ABI) took `main_export`
+    /// away: the entry point is `_engine_main` for every guest now. An SDK still
+    /// passing the old key must be told so at compile time rather than quietly
+    /// exporting nothing.
     #[test]
     fn the_pre_abi3_main_export_key_is_rejected() {
         let err = syn::parse_str::<SdkMain>(

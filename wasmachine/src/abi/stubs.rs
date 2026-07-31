@@ -38,7 +38,7 @@ pub unsafe fn fail(_: *const u8, _: usize) -> ! {
     panic!("wasmachine ABI: fail called outside wasm")
 }
 
-// --- ABI v2: sync primitives. ---
+// --- Sync primitives. ---
 pub unsafe fn signal_new() -> i32 {
     unimplemented!("wasmachine ABI: signal_new is wasm-only")
 }
@@ -82,7 +82,7 @@ pub unsafe fn channel_clear(_: i32) {
     unimplemented!("wasmachine ABI: channel_clear is wasm-only")
 }
 
-// --- ABI v2: randomness. `SplitRng` is pure guest Rust and needs none of
+// --- Randomness. `SplitRng` is pure guest Rust and needs none of
 // these, so the pure random logic stays testable on the host. ---
 pub unsafe fn random_nondet() -> i64 {
     unimplemented!("wasmachine ABI: random_nondet is wasm-only")
