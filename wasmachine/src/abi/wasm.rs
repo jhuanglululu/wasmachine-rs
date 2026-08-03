@@ -12,7 +12,13 @@
 #[link(wasm_import_module = "engine")]
 unsafe extern "C" {
     pub fn realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8;
-    pub fn fork() -> i32;
+    /// Start a task running `entry(data)`. `entry` is a function-table index of
+    /// an `extern "C" fn(i32)`, `data` an opaque guest pointer the host passes
+    /// straight through. The host allocates the child a stack region out of the
+    /// one shared heap and points its `__stack_pointer` at the top, so guests
+    /// must export that global (`-C link-arg=--export=__stack_pointer`).
+    /// Returns the new task id.
+    pub fn spawn(entry: i32, data: i32) -> i32;
     pub fn join(task: i32);
     pub fn kill(task: i32);
     pub fn exit() -> !;
@@ -21,8 +27,8 @@ unsafe extern "C" {
     pub fn fail(ptr: *const u8, len: usize) -> !;
 
     // --- Sync primitives. One host-side id space covers signals, barriers,
-    // composites and channels; a wrong-kind op kills. Ids are plain integers in
-    // the copied memory, so they survive fork for free. ---
+    // composites and channels; a wrong-kind op kills. Ids are plain integers,
+    // so a handle is trivially copyable into any task. ---
     pub fn signal_new() -> i32;
     pub fn signal_notify(id: i32, mode: i32);
     pub fn barrier_new(n: i32) -> i32;
@@ -43,6 +49,11 @@ unsafe extern "C" {
     pub fn random_nondet() -> i64;
     pub fn random_det() -> i64;
     pub fn seed_random(seed: i64);
+
+    // --- The read-only environment: the len/fill pair serving one blob of
+    // sorted key/value strings. See `crate::env` for the byte layout. ---
+    pub fn environ_len() -> i32;
+    pub fn environ_read(buf: *mut u8);
 
     // --- The math kernel. Transcendentals compile to software routines costing
     // ~500–1000 interpreted instructions each, while a host call costs tens;

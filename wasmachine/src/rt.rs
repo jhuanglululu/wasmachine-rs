@@ -1,13 +1,19 @@
 //! Runtime glue: init (called by the SDK's `main` attribute) and the
 //! host-backed global allocator.
 //!
-//! Note the absence of any synchronization: tasks are cooperative coroutines
-//! that only switch at blocking points (`sleep`, `join`), and a fork copies
-//! the whole memory, so no state here is ever shared or contended.
+//! Note the absence of any synchronization: every task of an instance shares
+//! one linear memory, but they are cooperative coroutines that only switch at
+//! blocking points (`sleep`, `join`, sync and channel ops), so a global here is
+//! never contended — no two tasks are ever mid-update at once.
 
 /// Called by the generated entry export before the user's `main`. Routes
 /// panics to host `fail` so every guest error kills the animation with a
-/// readable message instead of a bare trap.
+/// readable message instead of a bare trap, then loads the environment.
+///
+/// Order matters: the hook goes in first so that a malformed environ blob is
+/// reported as a readable kill rather than a bare trap, and the environment is
+/// loaded before seeding and before the user's first line, so
+/// [`environ`](crate::environ) never crosses the ABI again afterwards.
 pub fn init() {
     #[cfg(target_arch = "wasm32")]
     {
@@ -16,6 +22,7 @@ pub fn init() {
             crate::abi::marshal::fail(&msg)
         }));
     }
+    let _ = crate::env::environ();
 }
 
 /// Emitted by the SDK's `main` attribute for `random_seed = N`, right after
@@ -23,7 +30,7 @@ pub fn init() {
 /// reseed the host's deterministic stream and route
 /// [`default_random`](crate::random::default_random) to it. Runs before the
 /// user's `main` and before any task exists, so the routing flag is immutable
-/// from then on and every forked task inherits the same answer.
+/// from then on and every task reads the same answer out of the shared memory.
 pub fn seed_random(seed: i64) {
     crate::random::init_seeded(seed);
 }

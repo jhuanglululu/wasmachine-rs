@@ -49,7 +49,7 @@ fn animation() -> ExitCode {
 fn the_engine_handshake_is_fixed_not_configurable() {
     // Every guest exports this name, whatever plugin it belongs to — that is
     // what lets the host check the engine ABI without knowing the plugin.
-    assert_eq!(_engine_abi(), 1);
+    assert_eq!(_engine_abi(), 2);
     // One source of truth: the macro exports the crate's constant.
     assert_eq!(_engine_abi(), ENGINE_ABI_VERSION);
 }

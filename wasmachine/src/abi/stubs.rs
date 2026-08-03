@@ -16,8 +16,8 @@
 pub unsafe fn realloc(_: *mut u8, _: usize, _: usize, _: usize) -> *mut u8 {
     unreachable!("wasmachine ABI called outside wasm")
 }
-pub unsafe fn fork() -> i32 {
-    unimplemented!("wasmachine ABI: fork is wasm-only")
+pub unsafe fn spawn(_: i32, _: i32) -> i32 {
+    unimplemented!("wasmachine ABI: spawn is wasm-only")
 }
 pub unsafe fn join(_: i32) {
     unimplemented!("wasmachine ABI: join is wasm-only")
@@ -92,6 +92,16 @@ pub unsafe fn random_det() -> i64 {
 }
 pub unsafe fn seed_random(_: i64) {
     unimplemented!("wasmachine ABI: seed_random is wasm-only")
+}
+
+// --- The environment. Off wasm there is no host to serve a blob, so
+// `crate::env` skips these entirely and reports an empty environment; the
+// blob *parser* is pure guest Rust and stays unit-testable. ---
+pub unsafe fn environ_len() -> i32 {
+    unimplemented!("wasmachine ABI: environ_len is wasm-only")
+}
+pub unsafe fn environ_read(_: *mut u8) {
+    unimplemented!("wasmachine ABI: environ_read is wasm-only")
 }
 
 // --- The math kernel, computed natively. `sqrt`/`abs`/rounding have no kernel

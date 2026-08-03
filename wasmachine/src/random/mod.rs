@@ -16,12 +16,14 @@
 //! non-deterministic normally, the deterministic stream when the animation
 //! declared `random_seed = N` on the SDK's `main` attribute.
 //!
-//! **Why the deterministic default lives host-side.** A guest-global RNG would
-//! be *copied* by every fork, so two tasks seeded from it would replay the same
-//! sequence — a subtly identical animation in both. The host stream is one
-//! object outside the copied memory, so tasks draw from it in turn. If you do
-//! want fork-copied determinism, [`SplitRng`] gives it to you explicitly:
-//! `split()` before you `spawn`, and each task gets its own stream.
+//! **Why the deterministic default lives host-side.** Tasks share one linear
+//! memory, so a guest-global RNG would be one object every task mutates in
+//! turn — workable, but its draw order would then depend on the scheduling
+//! order of every task that touched it, which is exactly the thing a
+//! *deterministic* stream must not do. The host stream is one object with a
+//! defined order, and reseeding it is a single ABI call. When you want a stream
+//! whose sequence you own outright, [`SplitRng`] is the answer: `split()` per
+//! task, and each gets its own reproducible orbit.
 //!
 //! ```ignore
 //! let mut rng = default_random();
@@ -220,9 +222,13 @@ impl SplitRng {
     /// A new stream, independent of this one in practice, drawn from it: this
     /// stream advances twice (once for the child's seed, once for its gamma).
     ///
-    /// Split *before* [`spawn`](crate::spawn) — a fork copies memory, so a
-    /// `SplitRng` captured without splitting would replay the parent's
-    /// sequence in the child.
+    /// Split *before* [`spawn`](crate::spawn) when the parent wants to keep
+    /// drawing too. A `SplitRng` is plain `Copy` data in the one shared memory:
+    /// a closure that captures one by move takes the whole stream with it
+    /// (fine — the parent no longer has it), and a closure that captures a
+    /// *copy* leaves both sides walking the identical sequence, which is almost
+    /// never what an animation wants. `split()` is how you say "two streams,
+    /// independent, both reproducible from the same master seed".
     pub fn split(&mut self) -> SplitRng {
         let state = self.next_u64();
         let gamma = mix_gamma(self.next_state());
@@ -266,8 +272,8 @@ const fn mix_gamma(z: u64) -> u64 {
 }
 
 /// The host's non-deterministic stream: a different sequence every run of the
-/// animation. Zero-sized — the state lives host-side, so copies and forks all
-/// draw from the one stream.
+/// animation. Zero-sized — the state lives host-side, so every copy in every
+/// task draws from the one stream.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct HostRng;
 
@@ -311,13 +317,13 @@ impl Rng for DefaultRng {
     }
 }
 
-/// Set once by macro-generated init, before `main`, and never again. A fork
-/// copies it, which is exactly right: it is a compile-time property of the
-/// animation, identical in every task.
+/// Set once by macro-generated init, before `main` and before any task exists,
+/// and never again. It is a compile-time property of the animation, so every
+/// task reading it out of the shared memory reads the same answer.
 ///
-/// `AtomicBool` is not synchronization here (tasks are cooperative and share
-/// no memory) — it is simply the safe way to spell a mutable global, and
-/// `Relaxed` compiles to a plain load/store.
+/// `AtomicBool` is not synchronization here (tasks are cooperative, and this is
+/// written before the second one can exist) — it is simply the safe way to
+/// spell a mutable global, and `Relaxed` compiles to a plain load/store.
 static SEEDED: AtomicBool = AtomicBool::new(false);
 
 /// Reseed the host's deterministic stream and route [`default_random`] to it.

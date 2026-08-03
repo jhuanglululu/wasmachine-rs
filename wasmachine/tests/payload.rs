@@ -1,6 +1,7 @@
 //! Channel-payload contract tests: the core types that claim to be `Pod` must
-//! actually survive a byte round trip, and the sync handles must be `Sync`
-//! (capturable by `spawn`) with the receiver deliberately not clonable.
+//! actually survive a byte round trip, and the sync handles must be `Send`
+//! (movable into a `spawn`/`scope` closure) with the receiver deliberately not
+//! clonable.
 //!
 //! The host stubs panic for anything that crosses the ABI, so these tests
 //! check the *type-level* contract — which is exactly what the ABI cannot
@@ -18,14 +19,20 @@ fn requires_pod<T: Pod>() {}
 
 #[test]
 fn sync_handles_can_cross_into_a_spawned_task() {
-    // `spawn`'s closure is `Sync + 'static`: every sync handle must satisfy
-    // it, whatever the payload type is.
+    // `spawn`'s closure is `Send + 'static` (`Scope::spawn`'s is `Send +
+    // 'scope`): every sync handle must be `Send`, whatever the payload type is.
+    requires_send::<Signal>();
+    requires_send::<Barrier>();
+    requires_send::<Composite>();
+    requires_send::<Sender<Position>>();
+    requires_send::<Receiver<Position>>();
+    // They are `Sync` too — a plain host id has nothing to make it otherwise —
+    // so a handle can also be captured by reference.
     requires_sync::<Signal>();
     requires_sync::<Barrier>();
     requires_sync::<Composite>();
     requires_sync::<Sender<Position>>();
     requires_sync::<Receiver<Position>>();
-    requires_send::<Receiver<Position>>();
 
     // Senders clone (one per producer); the receiver deliberately does not,
     // which is what keeps the channel single-consumer.
@@ -81,7 +88,7 @@ struct Waypoint {
 #[test]
 fn a_payload_struct_of_core_types_round_trips() {
     requires_pod::<Waypoint>();
-    requires_sync::<Sender<Waypoint>>();
+    requires_send::<Sender<Waypoint>>();
 
     let w = Waypoint {
         target: Position::new(1.0, 2.0, 3.0),

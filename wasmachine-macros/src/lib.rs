@@ -39,9 +39,10 @@ use syn::{Ident, ItemFn, LitStr, Path, Token, braced, parenthesized, parse_macro
 /// two names, which is what lets the host load any module built on this crate
 /// without knowing which plugin it belongs to:
 ///
-/// - `_engine_main() -> i32` — the entry point, run as task 0: runtime init,
-///   the optional reseed, the author's function, and its exit code returned raw.
-///   The engine attaches no meaning to that `i32`; the plugin defines it.
+/// - `_engine_main() -> i32` — the entry point, run as task 0: runtime init
+///   (panic hook and the environment load), the optional reseed, the author's
+///   function, and its exit code returned raw. The engine attaches no meaning
+///   to that `i32`; the plugin defines it.
 /// - `_engine_abi() -> i32` — returns the SDK's re-export of
 ///   `wasmachine::ENGINE_ABI_VERSION`.
 ///
@@ -96,8 +97,9 @@ pub fn sdk_main(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
     // Seeding is part of init, so it runs before the user's first line and
-    // before any task is spawned — the routing flag is then immutable, and a
-    // fork just copies an already-correct value.
+    // before any task is spawned — the routing flag is then immutable, and
+    // every task reads the same already-correct value out of the one shared
+    // memory.
     // Emitted through proc_macro2's own literal, which renders i64::MIN as
     // `-9223372036854775808i64` — a form rustc accepts, unlike a negation
     // applied to a literal that has already overflowed.

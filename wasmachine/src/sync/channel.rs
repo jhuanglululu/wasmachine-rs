@@ -2,28 +2,34 @@
 //!
 //! Why a `(Sender, Receiver)` split rather than one `Channel<T>` handle: the
 //! host queue is *multi-producer, single-consumer*, and the split is what makes
-//! that shape true instead of merely documented. [`Sender`] is `Clone + Sync`
-//! (hand out one per producer task); [`Receiver`] is `Sync` but deliberately
-//! **not** `Clone`, so it moves — exactly once — into whichever task drains
-//! the channel, the same move-only discipline entity owner handles use. Two
-//! tasks racing on `recv` would be a real bug (each element goes to exactly one
-//! of them), and here it simply cannot be written.
+//! that shape true instead of merely documented. [`Sender`] is `Clone` (hand out
+//! one per producer task); [`Receiver`] is deliberately **not** `Clone`, so it
+//! moves — exactly once — into whichever task drains the channel. Two tasks
+//! racing on `recv` would be a real bug (each element goes to exactly one of
+//! them), and here it simply cannot be written.
 //!
-//! Payloads cross as the raw bytes of `T`, which is why `T: Pod`: a `String`,
-//! `Vec`, or reference in a payload is a compile error, because the receiving
-//! task's memory is a *copy* — the heap those types point into does not exist
-//! over there. Padding is rejected at compile time too (uninitialized padding
-//! bytes have no defined value to copy). Derive `Pod + Zeroable` (a plugin SDK
-//! puts both in its prelude) on your own `#[repr(C)]` structs; the math types
-//! here already do.
+//! **Why the queue is host-side, and why `T: Pod`.** A queue that parks a task
+//! when it is full or empty has to be where the scheduler is, so the elements
+//! are *staged host-side*: `send` copies the raw bytes of `T` out to the host,
+//! `recv` copies them back in. That staging format is the whole of the `Pod`
+//! requirement — the host stores bytes and has no idea what a guest pointer
+//! means, so a `String`, `Vec`, or reference in a payload is a compile error
+//! even though the receiving task shares the sender's heap. (Padding is
+//! rejected too: uninitialized padding bytes have no defined value to copy.)
+//! Derive `Pod + Zeroable` (a plugin SDK puts both in its prelude) on your own
+//! `#[repr(C)]` structs; the math types here already do. To hand a task
+//! something that is *not* `Pod`, move it into the closure, or borrow it
+//! through [`scope`](crate::scope) — one shared memory makes both work.
 //!
-//! **Getting a result back out of a task.** A fork copies memory, so nothing a
-//! child computes is visible to the parent — a channel is the way home. Size it
-//! for everything the child will send (here: one message per child) so the child
-//! never parks in `send`, have the parent drain first, and only then
-//! [`join`](crate::Task::join) to reap. Draining first is what keeps it safe: a
-//! parent that joins a child still parked in a full `send` parks forever, and
-//! nothing detects that (see the [module docs](crate::sync)).
+//! **Getting a result back out of a task.** A channel is one way home, and the
+//! one that needs no lifetime: size it for everything the child will send
+//! (here: one message per child) so the child never parks in `send`, have the
+//! parent drain first, and only then [`join`](crate::Task::join) to reap.
+//! Draining first is what keeps it safe: a parent that joins a child still
+//! parked in a full `send` parks forever, and nothing detects that (see the
+//! [module docs](crate::sync)). The other way home is
+//! [`scope`](crate::scope) — a scoped task can write its result straight into a
+//! borrowed local, no `Pod` and no capacity to size.
 //!
 //! ```ignore
 //! let (tx, rx) = channel::<Position>(WORKERS);
@@ -70,13 +76,13 @@ pub fn channel<T: Pod>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     )
 }
 
-/// The producing half. `Clone + Sync`: clone one per producer task before
-/// spawning them.
+/// The producing half. `Clone`: clone one per producer task before spawning
+/// them.
 #[derive(Debug)]
 pub struct Sender<T> {
     id: i32,
     // fn() -> T: the handle is Send + Sync whatever T is (it holds no T, just
-    // the host id), same trick the entity weak references use.
+    // the host id), the same trick a plugin SDK's weak references use.
     _payload: PhantomData<fn() -> T>,
 }
 
@@ -96,7 +102,7 @@ impl<T: Pod> Sender<T> {
     }
 }
 
-/// The consuming half. `Sync` so it can be captured by a spawned closure, but
+/// The consuming half. `Send`, so it can be moved into a spawned closure, but
 /// **not** `Clone`: moving it is what makes the channel single-consumer.
 #[derive(Debug)]
 pub struct Receiver<T> {
