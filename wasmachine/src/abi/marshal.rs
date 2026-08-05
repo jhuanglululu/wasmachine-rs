@@ -59,6 +59,57 @@ pub fn read_string(len: i32, what: &str, fill: impl FnOnce(*mut u8)) -> String {
     String::from_utf8(buf).unwrap_or_else(|_| panic!("host returned a non-UTF-8 {what}"))
 }
 
+// --- The shared static region, and the environment that lives in it. ---
+
+/// Copy `values` into the shared region and hand back the copy.
+///
+/// The region is a host-owned bump arena that never frees, so the copy outlives
+/// every task and every fork — hence the `'static`. `T: Copy` is what makes the
+/// bytewise copy sound; anything it *points* at must live in the region too, or
+/// the `'static` would be a lie (see [`crate::env`], which copies its index only
+/// after its strings are already there).
+///
+/// **Crate-internal**: the region is not animation-facing, and neither is the
+/// import behind this.
+pub(crate) fn shared_copy<T: Copy>(values: &[T]) -> &'static [T] {
+    let bytes = size_of_val(values);
+    if bytes == 0 {
+        return &[];
+    }
+    let ptr = unsafe { sys::shared_alloc(bytes, align_of::<T>()) }.cast::<T>();
+    assert!(
+        !ptr.is_null(),
+        "engine.shared_alloc returned a null pointer"
+    );
+    unsafe {
+        core::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len());
+        core::slice::from_raw_parts(ptr, values.len())
+    }
+}
+
+/// Read the whole environ blob **into the shared region** and hand it back.
+///
+/// Same two-call protocol as [`read_string`] — nothing parks between the calls,
+/// so it is race-free — except that the payload is binary and the buffer is
+/// shared rather than heap: every forked task reads the very same bytes. An
+/// empty environ (`environ_len() == 0`) skips the second call and the
+/// allocation both.
+pub(crate) fn environ() -> &'static [u8] {
+    let len = unsafe { sys::environ_len() };
+    let Some(len) = read_len(len, "environ") else {
+        return &[];
+    };
+    let ptr = unsafe { sys::shared_alloc(len, 1) };
+    assert!(
+        !ptr.is_null(),
+        "engine.shared_alloc returned a null pointer"
+    );
+    unsafe {
+        sys::environ_read(ptr);
+        core::slice::from_raw_parts(ptr, len)
+    }
+}
+
 // --- Channels: payload bytes in and out. ---
 
 pub fn channel_send(id: i32, bytes: &[u8]) {

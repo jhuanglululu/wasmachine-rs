@@ -44,6 +44,22 @@ unsafe extern "C" {
     pub fn random_det() -> i64;
     pub fn seed_random(seed: i64);
 
+    // --- The shared static region. A second address window the host maps far
+    // above any private address: `shared_alloc` bumps a pointer into it and
+    // never frees, so what it returns lives as long as the instance and is
+    // shared by every task (a fork copies the private memory only). Ordinary
+    // loads and stores through such a pointer just work — the interpreter
+    // routes by address. Exhausting the cap fails the instance, so guest code
+    // treats the allocation as infallible. Crate-internal: nothing above `abi`
+    // may hand animation code a way into the region. ---
+    pub(crate) fn shared_alloc(size: usize, align: usize) -> *mut u8;
+
+    // --- The read-only environment: the len/fill pair serving one blob of
+    // sorted key/value strings. `environ_read` writes wherever it is pointed,
+    // the shared region included. See `crate::env` for the byte layout. ---
+    pub(crate) fn environ_len() -> i32;
+    pub(crate) fn environ_read(buf: *mut u8);
+
     // --- The math kernel. Transcendentals compile to software routines costing
     // ~500–1000 interpreted instructions each, while a host call costs tens;
     // plain arithmetic and `f64.sqrt`/`f64.abs`/`f64.floor`/`f64.ceil`/

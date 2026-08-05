@@ -1,11 +1,15 @@
 //! Host-target stubs so the crate's pure logic is unit-testable with plain
 //! `cargo test`. Anything that would actually cross the boundary panics —
-//! except the math kernel, which is *computed* here: it is a pure function of
+//! except the math kernel, the shared region and the environ blob, which are
+//! *stood in for* here. The kernel is *computed*: it is a pure function of
 //! its arguments, so a native stand-in (Rust's own `f64` methods, and Rust's own
 //! formatting for [`format_f64`]) keeps `math` testable end to end. Those
 //! results are also the canonical ones the Java kernel is written to match:
 //! StrictMath for the transcendentals, half-even `BigDecimal` for the
-//! formatter, pinned from both sides by shared test vectors.
+//! formatter, pinned from both sides by shared test vectors. The shared region
+//! becomes a leak (same lifetime story: never freed, never reused) and the
+//! environ blob comes from a per-thread slot, which is what lets [`crate::env`]
+//! be exercised end to end natively.
 //!
 //! Compiled only for non-wasm targets.
 
@@ -92,6 +96,56 @@ pub unsafe fn random_det() -> i64 {
 }
 pub unsafe fn seed_random(_: i64) {
     unimplemented!("wasmachine ABI: seed_random is wasm-only")
+}
+
+// --- The shared static region and the environment, both *stood in for* rather
+// than refused: they are what [`crate::env`] is built on, and the environ
+// parser is pure guest logic worth testing end to end. A bump region that never
+// frees is, natively, simply a leak; the blob comes from a per-thread slot a
+// test fills in (empty by default, which is exactly "no environ"). ---
+
+/// Leaks a fresh allocation. The real region is a host-owned bump arena with no
+/// free, so a leak has the same lifetime story: the memory is valid forever and
+/// never reused.
+pub(crate) unsafe fn shared_alloc(size: usize, align: usize) -> *mut u8 {
+    if size == 0 {
+        // Same answer the bump allocator would give for nothing: a valid,
+        // aligned address that is never read.
+        return core::ptr::without_provenance_mut(align);
+    }
+    let layout = std::alloc::Layout::from_size_align(size, align)
+        .unwrap_or_else(|e| panic!("shared_alloc({size}, {align}) is not a valid layout: {e}"));
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    assert!(
+        !ptr.is_null(),
+        "shared_alloc({size}, {align}) is out of memory"
+    );
+    ptr
+}
+
+thread_local! {
+    /// The blob [`environ_len`]/[`environ_read`] serve on this thread.
+    static ENVIRON_BLOB: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Set the blob the environ stubs serve on the current thread. Test-only: on
+/// wasm the host owns the blob and there is nothing to set.
+pub(crate) fn set_environ_blob(blob: Vec<u8>) {
+    ENVIRON_BLOB.with(|b| *b.borrow_mut() = blob);
+}
+
+pub(crate) unsafe fn environ_len() -> i32 {
+    ENVIRON_BLOB
+        .with(|b| i32::try_from(b.borrow().len()).expect("environ blob longer than i32::MAX"))
+}
+
+pub(crate) unsafe fn environ_read(buf: *mut u8) {
+    ENVIRON_BLOB.with(|b| {
+        let blob = b.borrow();
+        if !blob.is_empty() {
+            unsafe { core::ptr::copy_nonoverlapping(blob.as_ptr(), buf, blob.len()) };
+        }
+    })
 }
 
 // --- The math kernel, computed natively. `sqrt`/`abs`/rounding have no kernel

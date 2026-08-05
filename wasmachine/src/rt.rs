@@ -3,11 +3,19 @@
 //!
 //! Note the absence of any synchronization: tasks are cooperative coroutines
 //! that only switch at blocking points (`sleep`, `join`), and a fork copies
-//! the whole memory, so no state here is ever shared or contended.
+//! the whole (private) memory, so no state here is ever shared or contended.
+//! The one thing tasks *do* share is the engine's read-only shared region,
+//! written during [`init`] on task 0 and never again.
 
 /// Called by the generated entry export before the user's `main`. Routes
 /// panics to host `fail` so every guest error kills the animation with a
-/// readable message instead of a bare trap.
+/// readable message instead of a bare trap, then loads the environment.
+///
+/// Order matters twice over: the hook goes in first, so a blob the two sides
+/// disagree about is reported as a readable kill rather than a bare trap; and
+/// the environment is loaded before the user's first line — on task 0, before
+/// any fork can exist — so it is parsed once into the shared region and every
+/// task afterwards reads it without crossing the ABI again.
 pub fn init() {
     #[cfg(target_arch = "wasm32")]
     {
@@ -16,6 +24,7 @@ pub fn init() {
             crate::abi::marshal::fail(&msg)
         }));
     }
+    crate::env::init();
 }
 
 /// Emitted by the SDK's `main` attribute for `random_seed = N`, right after
