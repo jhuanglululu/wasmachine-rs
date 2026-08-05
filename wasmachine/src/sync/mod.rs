@@ -2,13 +2,12 @@
 //! combinators, and bounded MPSC channels ([`channel`], [`Sender`],
 //! [`Receiver`]).
 //!
-//! Every one of these primitives is a *host-side* object addressed by an `i32`
-//! id, and that is deliberate even though tasks now share one linear memory:
-//! parking and waking are things only the scheduler can do, so the object that
-//! records who is parked belongs where the scheduler is. The guest handle is
-//! just the id — plain `Copy` data — so create the primitive before
-//! [`spawn`](crate::spawn) (or [`scope`](crate::scope)), capture the handle in
-//! the closure, and both sides talk to the same host object.
+//! A fork copies the whole linear memory, so tasks share **no Rust data** —
+//! every one of these primitives is a *host-side* object addressed by an
+//! `i32` id. That id is a plain integer sitting in the copied memory, so every
+//! handle here is `Sync` and survives fork for free: create the primitive before
+//! [`spawn`](crate::spawn), capture the handle in the closure, and both sides
+//! talk to the same host object.
 //!
 //! [`Signal`], [`Barrier`] and [`Composite`] are additionally `Clone + Copy` —
 //! hand them to as many tasks as you like. A channel splits that: [`Sender`] is
@@ -36,9 +35,8 @@
 //! should be creating; it is a runaway-allocation backstop, not a budget to
 //! spend). Since nothing is ever released, a primitive created inside a
 //! per-frame loop accumulates.
-//! Nothing here needs atomics — scheduling is cooperative, so a task runs
-//! uninterrupted between two blocking points even though it shares memory with
-//! every other task.
+//! Nothing here needs atomics — scheduling is cooperative and a task runs
+//! uninterrupted between two blocking points.
 //!
 //! # Deadlock is silent
 //!

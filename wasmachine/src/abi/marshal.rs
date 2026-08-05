@@ -59,22 +59,6 @@ pub fn read_string(len: i32, what: &str, fill: impl FnOnce(*mut u8)) -> String {
     String::from_utf8(buf).unwrap_or_else(|_| panic!("host returned a non-UTF-8 {what}"))
 }
 
-// --- The environment: one blob, read once at init. ---
-
-/// Read the whole environ blob. Same two-call protocol as [`read_string`], but
-/// the payload is binary rather than text, so it comes back as bytes for
-/// [`crate::env`] to parse. A zero length skips the second call.
-#[cfg(target_arch = "wasm32")]
-pub fn environ() -> Vec<u8> {
-    let len = unsafe { sys::environ_len() };
-    let Some(len) = read_len(len, "environ") else {
-        return Vec::new();
-    };
-    let mut buf = vec![0u8; len];
-    unsafe { sys::environ_read(buf.as_mut_ptr()) };
-    buf
-}
-
 // --- Channels: payload bytes in and out. ---
 
 pub fn channel_send(id: i32, bytes: &[u8]) {

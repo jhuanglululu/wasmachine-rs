@@ -2,11 +2,10 @@
 //! pointers and `extern` functions exist; everything above it is safe Rust.
 //!
 //! Contract: `context/designs/guest-abi.md` in the WASMachine repo. Only wasm
-//! core types cross; strings pass as (ptr, len) into the guest's linear memory,
-//! which every task of the instance shares. Task ids are i32 host handles; all
-//! math crosses as f64/i64. Getters write into out-pointers; a
-//! `get_*_len`/`get_*` pair has no blocking point between its two calls, so it
-//! is race-free.
+//! core types cross; strings pass as (ptr, len) in the calling task's memory.
+//! Task ids are i32 host handles; all math crosses as f64/i64. Getters write
+//! into out-pointers in the calling task's memory; a `get_*_len`/`get_*` pair
+//! has no blocking point between its two calls, so it is race-free.
 //!
 //! The split:
 //! - `sys` — the imports themselves: `wasm.rs` declares the real
